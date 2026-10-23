@@ -133,6 +133,8 @@ def make_summary(rng, pattern, i):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base-url', default='http://127.0.0.1:5050')
+    parser.add_argument('--ishaan-level', default='nothing', choices=['nothing', 'team_totals', 'my_trend'],
+                        help="ishaan's sharing level; anything but 'nothing' uploads his 14 days")
     args = parser.parse_args()
 
     tokens = load_tokens()
@@ -149,6 +151,8 @@ def main():
     for team_name, team in TEAMS.items():
         for username in team['members']:
             pattern, level = PEOPLE[username]
+            if username == 'ishaan':
+                level = args.ishaan_level
             client = Client(args.base_url)
             register_or_login(client, username, 'individual')
 

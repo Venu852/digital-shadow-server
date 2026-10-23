@@ -74,10 +74,12 @@ def create_app(test_config=None):
         return jsonify({"ok": True})
 
     # Register blueprints
-    from . import auth, teams, sharing, devices
+    from . import auth, teams, sharing, devices, me_views, manager
     app.register_blueprint(auth.bp)
     app.register_blueprint(teams.bp)
     app.register_blueprint(sharing.bp)
     app.register_blueprint(devices.bp)
+    app.register_blueprint(me_views.bp)
+    app.register_blueprint(manager.bp)
 
     return app
