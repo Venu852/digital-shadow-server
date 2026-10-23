@@ -3,7 +3,7 @@ import secrets
 from flask import Flask, jsonify, request, g
 
 def create_app(test_config=None):
-    app = Flask(__name__, instance_relative_config=True)
+    app = Flask(__name__, instance_relative_config=True, static_folder=None)
 
     # Default configuration
     db_default = os.path.join(app.instance_path, 'shadow.db')
@@ -11,6 +11,7 @@ def create_app(test_config=None):
         DATABASE=os.environ.get('SHADOW_DB', db_default),
         SECRET_KEY=os.environ.get('SHADOW_SECRET_KEY'),
         COOKIE_SECURE=os.environ.get('COOKIE_SECURE') == '1',
+        DASHBOARD_DIR=os.environ.get('SHADOW_DASHBOARD_DIR'),
     )
 
     if test_config:
@@ -81,5 +82,8 @@ def create_app(test_config=None):
     app.register_blueprint(devices.bp)
     app.register_blueprint(me_views.bp)
     app.register_blueprint(manager.bp)
+
+    from . import dashboard
+    dashboard.register(app)
 
     return app

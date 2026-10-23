@@ -15,7 +15,11 @@ pip install -r requirements.txt
 
 # Run server
 python run.py
+
+# Run server and also serve the built dashboard (F:\digital-shadow-dashboard, `npm run build`)
+$env:SHADOW_DASHBOARD_DIR="F:\digital-shadow-dashboard\dist"; python run.py
 ```
+SHADOW_DASHBOARD_DIR is optional. When it names an existing folder, app/dashboard.py serves its files at / and returns index.html for any other non-/api path (single-page app fallback); unknown /api paths and paths that escape the folder (..) stay 404.
 
 ## Testing
 ```bash
