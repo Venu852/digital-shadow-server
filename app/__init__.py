@@ -45,6 +45,8 @@ def create_app(test_config=None):
     # Lockout state: (ip, username) -> [timestamp, count]
     # In-memory dict is fine as per requirements
     app.lockout_data = {}
+    # Device rate limit state: device_id -> [timestamps]
+    app.device_rate_data = {}
 
     @app.before_request
     def check_security():
@@ -54,7 +56,9 @@ def create_app(test_config=None):
 
         # POST/PUT/DELETE require X-Requested-With and JSON body
         if request.method in ['POST', 'PUT', 'DELETE']:
-            if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+            # Device token routes never use cookies, so they are exempt from this check
+            if (request.endpoint not in devices.TOKEN_ENDPOINTS
+                    and request.headers.get('X-Requested-With') != 'XMLHttpRequest'):
                 return jsonify({"error": "Missing X-Requested-With header"}), 400
             if not request.is_json:
                 return jsonify({"error": "Content-Type must be application/json"}), 400
@@ -70,8 +74,10 @@ def create_app(test_config=None):
         return jsonify({"ok": True})
 
     # Register blueprints
-    from . import auth, teams
+    from . import auth, teams, sharing, devices
     app.register_blueprint(auth.bp)
     app.register_blueprint(teams.bp)
+    app.register_blueprint(sharing.bp)
+    app.register_blueprint(devices.bp)
 
     return app
