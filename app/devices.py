@@ -11,6 +11,7 @@ from flask import Blueprint, request, jsonify, current_app, g
 from werkzeug.security import check_password_hash
 from .db import get_db
 from .auth import login_required, is_locked_out, record_failed_login, clear_lockout
+from .rules import SIGNAL_KEYS
 from .sharing import get_sharing
 
 bp = Blueprint('devices', __name__, url_prefix='/api')
@@ -26,7 +27,7 @@ TOKEN_ENDPOINTS = {
 MAX_BODY = 4096
 RATE_LIMIT = 300
 RATE_WINDOW = 3600
-LEVEL_KEYS = {'switching', 'session', 'checks', 'screen', 'steadiness'}
+LEVEL_KEYS = set(SIGNAL_KEYS)
 REQUIRED_KEYS = {'drift', 'levels', 'confidence', 'baseline'}
 OPTIONAL_KEYS = {'forecast', 'unusual_hours', 'tz'}
 DAY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
@@ -117,7 +118,7 @@ def validate_summary(data):
         return "drift must be an integer 0-100"
     levels = data['levels']
     if not isinstance(levels, dict) or set(levels) != LEVEL_KEYS:
-        return "levels must have exactly: " + ", ".join(sorted(LEVEL_KEYS))
+        return "levels must have exactly: " + ", ".join(SIGNAL_KEYS)
     if not all(is_int(v, 0, 100) for v in levels.values()):
         return "levels must be integers 0-100"
     if not is_int(data['confidence'], 0, 100):

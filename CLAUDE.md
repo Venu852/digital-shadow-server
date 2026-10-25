@@ -30,6 +30,7 @@ python -m pytest -q
 python scripts/smoke.py
 
 # Fill the server with 6 demo people, 2 teams and 14 days of phone data (requires server running).
+# Each day carries the six signal levels and drift = their mean, rounded half up.
 # Safe to re-run; device tokens are cached in instance/fake_phones_tokens.json.
 python scripts/fake_phones.py [--base-url http://127.0.0.1:5050] [--ishaan-level nothing|team_totals|my_trend]
 
@@ -46,17 +47,21 @@ Phase 3 tests share the `World` helper and `world` fixture defined in tests/test
 - Sharing levels are read at request time on every view; withdrawing consent removes a person from every view immediately (data stays stored until the person deletes it).
 - Aggregate responses never contain usernames or account ids.
 - Every manager view of a person (view_trend, view_explain) is written to audit_log; a person can always read who viewed them via GET /api/me/access-log.
-- A non-'None' team context tag damps the displayed drift by 15 (clamped at 0); the raw value is also returned. A manager viewing a person sees only their own team's context.
+- Context tags: None | Exam week | Travel | Holiday or break | Busy period | New routine. A non-'None' team context tag damps the displayed drift by 15 (clamped at 0); the raw value is also returned. A manager viewing a person sees only their own team's context.
 - Scoring rules and wording live in app/rules.py (pure functions); shared queries in app/data.py.
 - DELETE /api/me removes the account and everything attached; a manager's teams are deleted first.
 - Bind to 127.0.0.1 ONLY.
 - The server stores nothing from a phone unless that person's sharing level allows it ('nothing' -> 403 "sharing is off"; no consent row means 'nothing').
-- Phones upload ONLY the daily summary fields (drift, five levels, confidence, baseline, forecast, unusual_hours, tz); no app names, no raw data. Unknown fields -> 400.
+- Phones upload ONLY the daily summary fields (drift, levels, confidence, baseline, forecast, unusual_hours, tz); no app names, no raw data. Unknown fields -> 400.
+- `levels` holds exactly the six signals, each an int 0-100, in this order: switching (App switching), session (Session length), checks (Phone checks), screen (Screen time), night (Late-night use), timing (Routine timing). Any other key set -> 400. The keys live in app/rules.py SIGNALS.
+- SUGGESTION_THRESHOLD (30, app/rules.py): a group day whose displayed average drift is at or above it gets a group suggestion for its top signal (the 4 newest such days, shown to the coordinator).
+- GET /api/me/suggestions (individuals only; managers 403): when the person's latest displayed drift is 20 (PERSONAL_SUGGESTION_THRESHOLD) or more, up to 2 personal suggestions for the highest signals, else []. Only the person ever sees these.
+- Wording: the product measures a person's own phone-use rhythm and how it shifts, never performance, productivity or wellbeing.
 - Phones authenticate with a device token (`Authorization: Bearer`), never the password after pairing. Only the token's SHA-256 hex is stored; the token is returned once.
 - Sharing levels: nothing | team_totals | my_trend. Each change adds a sharing_consents row; the newest row is current.
 
 ## Standing Rules
-- Migrations are append-only (numbered SQL files in app/migrations/).
+- Migrations are append-only (numbered SQL files in app/migrations/). Each file runs atomically with its schema_version row (app/db.py); never put BEGIN/COMMIT in a migration file.
 - Every protected route needs authentication.
 - Never commit `instance/` or secrets.
 - Dependencies need approval (currently only flask, pytest).

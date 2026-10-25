@@ -5,7 +5,8 @@ from . import data
 from .audit import access_log_for
 from .auth import login_required
 from .db import get_db
-from .rules import EXPLAIN_NOTE, display_drift, factor_breakdown, horizon_for, status_for
+from .rules import (EXPLAIN_NOTE, PERSONAL_SUGGESTION_THRESHOLD, display_drift, factor_breakdown,
+                    horizon_for, personal_suggestions, status_for)
 
 bp = Blueprint('me_views', __name__, url_prefix='/api/me')
 
@@ -77,6 +78,19 @@ def my_trend():
 @individual_only
 def my_explain():
     return jsonify(build_explain(g.user['id'], 'self')), 200
+
+@bp.route('/suggestions', methods=['GET'])
+@individual_only
+def my_suggestions():
+    # Shown only to the person; a coordinator never sees these
+    readings = data.account_series(g.user['id'], 1)
+    if not readings:
+        return jsonify([]), 200
+    latest = readings[-1]
+    drift = display_drift(latest['drift_raw'], bool(data.account_context(g.user['id'])))
+    if drift < PERSONAL_SUGGESTION_THRESHOLD:
+        return jsonify([]), 200
+    return jsonify(personal_suggestions(latest['levels'])), 200
 
 @bp.route('/access-log', methods=['GET'])
 @individual_only

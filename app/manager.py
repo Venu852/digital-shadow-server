@@ -6,7 +6,7 @@ from .audit import record
 from .auth import login_required
 from .db import get_db
 from .me_views import MAX_DAYS, build_explain, build_trend, parse_days
-from .rules import (CONTEXT_TAGS, MIN_GROUP, SIGNALS_BY_KEY, TEAM_ACTION_THRESHOLD,
+from .rules import (CONTEXT_TAGS, MIN_GROUP, SIGNALS_BY_KEY, SUGGESTION_THRESHOLD,
                     display_drift, horizon_for, status_for, top_signal)
 
 bp = Blueprint('manager', __name__, url_prefix='/api')
@@ -52,7 +52,7 @@ def public_entry(entry):
     return {key: entry[key] for key in ('day', 'avg_raw', 'avg', 'contributors')}
 
 def current_actions(team_id, settings, series):
-    candidates = [e for e in reversed(series) if e['avg'] >= TEAM_ACTION_THRESHOLD][:MAX_ACTIONS]
+    candidates = [e for e in reversed(series) if e['avg'] >= SUGGESTION_THRESHOLD][:MAX_ACTIONS]
     rows = get_db().execute(
         "SELECT day, decision FROM action_decisions WHERE team_id = ?", (team_id,)
     ).fetchall()

@@ -3,53 +3,70 @@ import math
 
 MIN_GROUP = 3
 CONTEXT_DAMP = 15
-TEAM_ACTION_THRESHOLD = 30
-CONTEXT_TAGS = ('None', 'Exam week', 'Deadline crunch', 'Product launch', 'Holiday or break')
+# A group's displayed drift at or above this produces a group suggestion
+SUGGESTION_THRESHOLD = 30
+# A person's latest displayed drift at or above this produces personal suggestions
+PERSONAL_SUGGESTION_THRESHOLD = 20
+CONTEXT_TAGS = ('None', 'Exam week', 'Travel', 'Holiday or break', 'Busy period', 'New routine')
 
-# Ordered: earlier signals win ties
+# Ordered: earlier signals win ties. "action" is the group suggestion shown to the coordinator;
+# "personal" is shown only to the person.
 SIGNALS = (
     {
         "key": "switching",
         "label": "App switching",
         "self": "You are switching between apps more often than your usual.",
-        "manager": "Switching between apps is more frequent than baseline.",
-        "action": "Reduce open workload and consolidate tasks into one view.",
+        "manager": "App switching is above the group's baseline.",
+        "action": "Reduce parallel tasks so people can stay with one thing longer.",
+        "personal": "Try checking messages at set times instead of switching all day.",
     },
     {
         "key": "session",
         "label": "Session length",
         "self": "Your time in a single app is shorter than usual.",
         "manager": "Time in a single app is shorter than baseline.",
-        "action": "Adjust pacing and shorten the next module.",
+        "action": "Protect longer uninterrupted blocks; cut interruptions and hand-offs.",
+        "personal": "Try one longer, uninterrupted block today, even 25 minutes.",
     },
     {
         "key": "checks",
         "label": "Phone checks",
         "self": "You are picking up the phone more often than your baseline.",
         "manager": "Phone pick-ups are more frequent than baseline.",
-        "action": "Insert a short break prompt and lighten the task queue.",
+        "action": "Batch non-urgent updates and pings into set times.",
+        "personal": "Try leaving the phone out of reach for one hour.",
     },
     {
         "key": "screen",
         "label": "Screen time",
-        "self": "Screen-on time is above your usual for this time of day.",
-        "manager": "Screen-on time is above baseline for this time of day.",
-        "action": "Plan shorter focus blocks with a short break between them.",
+        "self": "Your screen-on time is above your usual.",
+        "manager": "Screen-on time is above baseline.",
+        "action": "Avoid long back-to-back screen sessions; encourage short breaks.",
+        "personal": "Try a short screen-free break between long stretches.",
     },
     {
-        "key": "steadiness",
-        "label": "Motion steadiness",
-        "self": "Phone handling is less steady than usual.",
-        "manager": "Phone handling is less steady than baseline.",
-        "action": "Lower task difficulty and surface guided hints.",
+        "key": "night",
+        "label": "Late-night use",
+        "self": "You are using the phone more between midnight and 5am than usual.",
+        "manager": "Late-night phone use is above baseline.",
+        "action": "Avoid late-evening requests and deadlines; keep after-hours messages to a minimum.",
+        "personal": "Try putting the phone away 30 minutes earlier tonight.",
+    },
+    {
+        "key": "timing",
+        "label": "Routine timing",
+        "self": "Your phone day is starting or ending at different times than usual.",
+        "manager": "Daily start and end times are shifting from baseline.",
+        "action": "Keep meeting and deadline times steady; avoid sudden schedule changes.",
+        "personal": "Try keeping your first and last phone use of the day closer to your usual times.",
     },
 )
 SIGNAL_KEYS = tuple(s["key"] for s in SIGNALS)
 SIGNALS_BY_KEY = {s["key"]: s for s in SIGNALS}
 
 EXPLAIN_NOTE = (
-    "This reading says behaviour is changing direction. It never states a diagnosis, "
-    "a mental-health condition, or a performance judgement."
+    "This reading says your phone-use rhythm is shifting. It never states a diagnosis, "
+    "a mental-health condition, or a judgement about you."
 )
 
 def round_half_up(value):
@@ -73,7 +90,7 @@ def horizon_for(displayed_series):
         return "2 to 3 weeks if the trend continues"
     if slope > 2:
         return "4 to 6 weeks if the trend continues"
-    return "No defined horizon: trend is stable or improving"
+    return "No defined trend: stable or improving"
 
 def display_drift(drift_raw, context_applies):
     """Context tags (exam week etc.) explain some drift, so the shown value is damped."""
@@ -95,3 +112,13 @@ def factor_breakdown(levels, voice):
 
 def top_signal(levels):
     return max(SIGNAL_KEYS, key=lambda key: (levels[key], -SIGNAL_KEYS.index(key)))
+
+def personal_suggestions(levels, limit=2):
+    """Nudges for the signals with the highest levels; ties follow SIGNALS order."""
+    ranked = sorted(SIGNALS, key=lambda s: levels[s["key"]], reverse=True)[:limit]
+    return [{
+        "signal": s["key"],
+        "label": s["label"],
+        "text": s["personal"],
+        "because": s["self"],
+    } for s in ranked]

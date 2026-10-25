@@ -14,7 +14,7 @@ def day_str(offset=0):
 def summary(**overrides):
     body = {
         'drift': 20,
-        'levels': {'switching': 18, 'session': 22, 'checks': 20, 'screen': 19, 'steadiness': 21},
+        'levels': {'switching': 18, 'session': 22, 'checks': 20, 'screen': 19, 'night': 21, 'timing': 20},
         'confidence': 70,
         'baseline': 'established',
         'forecast': {'screen_min': 210, 'usual_min': 190},
@@ -171,3 +171,15 @@ def test_upload_response_has_no_hashes(auth, client):
     body = upload(client, headers).get_data(as_text=True)
     assert 'token_hash' not in body
     assert 'password_hash' not in body
+
+def test_old_steadiness_key_rejected(app, auth, client):
+    _, headers = setup_device(auth, client)
+    old = {'switching': 18, 'session': 22, 'checks': 20, 'screen': 19, 'steadiness': 21}
+    res = upload(client, headers, body=summary(levels=old))
+    assert res.status_code == 400
+    assert res.get_json() == {
+        'error': 'levels must have exactly: switching, session, checks, screen, night, timing'}
+    # Adding steadiness on top of the six keys is also refused
+    res = upload(client, headers, body=summary(levels=bad_levels(lambda l: l.update(steadiness=5))))
+    assert res.status_code == 400
+    assert count_rows(app) == 0

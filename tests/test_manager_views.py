@@ -1,7 +1,7 @@
 import pytest
 from test_privacy_matrix import XHR, World, day_str, now_iso, world  # noqa: F401
 
-LEVEL_KEYS = ('switching', 'session', 'checks', 'screen', 'steadiness')
+LEVEL_KEYS = ('switching', 'session', 'checks', 'screen', 'night', 'timing')
 
 @pytest.fixture
 def team(world):
@@ -36,10 +36,10 @@ def test_aggregate_values(world, team):
     assert body['horizon'] == '2 to 3 weeks if the trend continues'
 
 def test_aggregate_context_damp(world, team):
-    res = world.client.put(f'/api/teams/{team}/settings', json={'context_tag': 'Deadline crunch'}, headers=XHR)
+    res = world.client.put(f'/api/teams/{team}/settings', json={'context_tag': 'Busy period'}, headers=XHR)
     assert res.status_code == 200
     body = world.get(f'/api/teams/{team}/aggregate').get_json()
-    assert body['context'] == 'Deadline crunch'
+    assert body['context'] == 'Busy period'
     assert [(e['avg_raw'], e['avg']) for e in body['series']] == [(11, 0), (21, 6), (31, 16), (42, 27)]
     overview = world.get('/api/manager/overview').get_json()['teams'][0]
     assert (overview['avg_raw'], overview['avg']) == (42, 27)
@@ -70,7 +70,7 @@ def test_people_and_person_views(world, team):
 
     explain = world.get(f"/api/teams/{team}/people/{world.ids['bob']}/explain").get_json()
     assert explain['day'] == day_str()
-    assert explain['factors'][0]['cause'] == 'Switching between apps is more frequent than baseline.'
+    assert explain['factors'][0]['cause'] == "App switching is above the group's baseline."
 
 def test_person_trend_uses_team_context(world, team):
     world.client.put(f'/api/teams/{team}/settings', json={'context_tag': 'Exam week'}, headers=XHR)
@@ -82,16 +82,16 @@ def test_settings_defaults_and_update(world, team):
     body = world.get(f'/api/teams/{team}/settings').get_json()
     assert body == {
         'human_review': True, 'context_tag': 'None',
-        'context_options': ['None', 'Exam week', 'Deadline crunch', 'Product launch', 'Holiday or break'],
+        'context_options': ['None', 'Exam week', 'Travel', 'Holiday or break', 'Busy period', 'New routine'],
     }
     res = world.client.put(f'/api/teams/{team}/settings', json={'human_review': False}, headers=XHR)
     assert res.status_code == 200
     assert res.get_json()['human_review'] is False
     assert res.get_json()['context_tag'] == 'None'
 
-    res = world.client.put(f'/api/teams/{team}/settings', json={'context_tag': 'Product launch'}, headers=XHR)
+    res = world.client.put(f'/api/teams/{team}/settings', json={'context_tag': 'New routine'}, headers=XHR)
     assert res.get_json()['human_review'] is False
-    assert world.get(f'/api/teams/{team}/settings').get_json()['context_tag'] == 'Product launch'
+    assert world.get(f'/api/teams/{team}/settings').get_json()['context_tag'] == 'New routine'
 
     rows = world.query("SELECT action, team_id, target_id FROM audit_log WHERE action = 'update_settings'")
     assert rows == [{'action': 'update_settings', 'team_id': team, 'target_id': None}] * 2

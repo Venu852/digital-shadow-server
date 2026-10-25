@@ -83,7 +83,7 @@ class World:
         device_id = device_id or self.device(username)
         for i, drift in enumerate(drifts):
             lv = levels[i] if levels else {k: drift for k in
-                                            ('switching', 'session', 'checks', 'screen', 'steadiness')}
+                                            ('switching', 'session', 'checks', 'screen', 'night', 'timing')}
             self.db(
                 """INSERT OR REPLACE INTO daily_summaries
                    (device_id, day, drift, levels_json, confidence, baseline, received_at)
@@ -263,7 +263,7 @@ def test_three_sharing_members_shows_numbers(world):
     agg = aggregate(world, team_id).get_json()
     assert agg['hidden'] is False
     assert len(agg['series']) == 14
-    assert agg['levels_avg'] == {k: 60 for k in ('switching', 'session', 'checks', 'screen', 'steadiness')}
+    assert agg['levels_avg'] == {k: 60 for k in ('switching', 'session', 'checks', 'screen', 'night', 'timing')}
 
     actions = world.get(f'/api/teams/{team_id}/actions').get_json()
     assert len(actions['actions']) == 4

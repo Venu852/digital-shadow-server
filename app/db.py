@@ -38,9 +38,17 @@ def init_db(app):
             version = int(filename.split('_')[0])
             if version > current_version:
                 with open(os.path.join(migrations_dir, filename), 'r') as f:
-                    db.executescript(f.read())
-                db.execute(
-                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
-                    (version, datetime.datetime.now(datetime.UTC).isoformat())
-                )
-                db.commit()
+                    script = f.read()
+                applied_at = datetime.datetime.now(datetime.UTC).isoformat()
+                # executescript runs in autocommit mode, so wrap the script and its version
+                # row in one explicit transaction: a failing migration leaves nothing behind
+                try:
+                    db.executescript(
+                        "BEGIN;\n" + script + "\n;"
+                        f"INSERT INTO schema_version (version, applied_at) VALUES ({version}, '{applied_at}');\n"
+                        "COMMIT;"
+                    )
+                except sqlite3.Error:
+                    if db.in_transaction:
+                        db.execute("ROLLBACK")
+                    raise

@@ -36,7 +36,7 @@ PATTERNS = {
     "mild": lambda i: 14 + i * 1.8,
     "recovering": lambda i: 68 - i * 3.8,
 }
-LEVEL_KEYS = ["switching", "session", "checks", "screen", "steadiness"]
+LEVEL_KEYS = ["switching", "session", "checks", "screen", "night", "timing"]
 
 class Client:
     """One person's HTTP client with its own cookie jar."""
@@ -117,7 +117,8 @@ def clamp(value):
 def make_summary(rng, pattern, i):
     base = clamp(PATTERNS[pattern](i) + rng.uniform(-3, 3))
     levels = {key: clamp(base + rng.randint(-8, 8)) for key in LEVEL_KEYS}
-    drift = clamp(sum(levels.values()) / len(levels))
+    # Drift is the mean of the six levels, rounded half up like the server's rules
+    drift = int(math.floor(sum(levels.values()) / len(levels) + 0.5))
     usual = rng.randint(170, 230)
     hours = sorted(rng.sample(range(24), rng.randint(0, 3))) if drift > 30 else []
     return {
