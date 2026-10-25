@@ -1,3 +1,4 @@
+import datetime
 import re
 import pytest
 from app.db import get_db
@@ -134,3 +135,69 @@ def test_no_response_contains_hashes(auth, client):
         body = res.get_data(as_text=True)
         assert 'token_hash' not in body
         assert 'password_hash' not in body
+
+def test_device_sharing_sets_level_and_records_changes_only(app, auth, client):
+    auth.register(username='phoneuser', password='password123', role='individual')
+    token = pair(client).get_json()['device_token']
+    auth.logout()
+
+    # First explicit choice adds a row even when it matches the default
+    for level in ['nothing', 'nothing', 'team_totals', 'team_totals', 'my_trend']:
+        res = client.put('/api/device/sharing', json={'level': level}, headers=bearer(token))
+        assert res.status_code == 200
+        assert res.get_json()['level'] == level
+        assert res.get_json()['changed_at']
+        assert client.get('/api/device/me', headers=bearer(token)).get_json()['sharing_level'] == level
+
+    with app.app_context():
+        rows = get_db().execute("SELECT level FROM sharing_consents ORDER BY id").fetchall()
+    assert [r['level'] for r in rows] == ['nothing', 'team_totals', 'my_trend']
+
+def test_device_sharing_unchanged_returns_current_row(auth, client):
+    auth.register(username='phoneuser', password='password123', role='individual')
+    token = pair(client).get_json()['device_token']
+    first = client.put('/api/device/sharing', json={'level': 'my_trend'}, headers=bearer(token)).get_json()
+    again = client.put('/api/device/sharing', json={'level': 'my_trend'}, headers=bearer(token)).get_json()
+    assert again == first
+    # Matches what the cookie route reports
+    assert client.get('/api/me/sharing').get_json() == first
+
+def test_device_sharing_invalid_level(auth, client):
+    auth.register(username='phoneuser', password='password123', role='individual')
+    token = pair(client).get_json()['device_token']
+    for body in [{'level': 'everything'}, {}, {'level': None}, []]:
+        res = client.put('/api/device/sharing', json=body, headers=bearer(token))
+        assert res.status_code == 400
+        assert res.get_json() == {'error': 'Invalid sharing level'}
+    assert client.get('/api/device/me', headers=bearer(token)).get_json()['sharing_level'] == 'nothing'
+
+def test_device_sharing_needs_token_not_cookie_or_xhr(auth, client):
+    auth.register(username='phoneuser', password='password123', role='individual')
+    data = pair(client).get_json()
+    # Cookie (with XHR) is not enough
+    res = client.put('/api/device/sharing', json={'level': 'my_trend'}, headers=XHR)
+    assert res.status_code == 401
+    # Token without X-Requested-With is accepted
+    res = client.put('/api/device/sharing', json={'level': 'my_trend'}, headers=bearer(data['device_token']))
+    assert res.status_code == 200
+
+    client.delete(f"/api/devices/{data['device_id']}", headers=XHR, json={})
+    res = client.put('/api/device/sharing', json={'level': 'nothing'}, headers=bearer(data['device_token']))
+    assert res.status_code == 401
+
+def test_device_sharing_nothing_stops_uploads(auth, client):
+    auth.register(username='phoneuser', password='password123', role='individual')
+    token = pair(client).get_json()['device_token']
+    body = {
+        'drift': 34, 'confidence': 76, 'baseline': 'established', 'tz': '+05:30',
+        'levels': {'switching': 55, 'session': 40, 'checks': 35,
+                   'screen': 30, 'night': 20, 'timing': 25},
+    }
+    day = datetime.datetime.now(datetime.UTC).date().isoformat()
+
+    client.put('/api/device/sharing', json={'level': 'team_totals'}, headers=bearer(token))
+    assert client.put(f'/api/device/days/{day}', json=body, headers=bearer(token)).status_code == 200
+    client.put('/api/device/sharing', json={'level': 'nothing'}, headers=bearer(token))
+    res = client.put(f'/api/device/days/{day}', json=body, headers=bearer(token))
+    assert res.status_code == 403
+    assert res.get_json() == {'error': 'sharing is off'}

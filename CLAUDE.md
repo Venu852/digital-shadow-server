@@ -59,6 +59,7 @@ Phase 3 tests share the `World` helper and `world` fixture defined in tests/test
 - Wording: the product measures a person's own phone-use rhythm and how it shifts, never performance, productivity or wellbeing.
 - Phones authenticate with a device token (`Authorization: Bearer`), never the password after pairing. Only the token's SHA-256 hex is stored; the token is returned once.
 - Sharing levels: nothing | team_totals | my_trend. Each change adds a sharing_consents row; the newest row is current.
+- A person sets their level from the dashboard (PUT /api/me/sharing, cookie) or from a paired phone (PUT /api/device/sharing, Bearer token). Both use app/sharing.py set_sharing: a row is added only for the first choice or a real change; both return 200 {level, changed_at}, invalid level -> 400.
 
 ## Standing Rules
 - Migrations are append-only (numbered SQL files in app/migrations/). Each file runs atomically with its schema_version row (app/db.py); never put BEGIN/COMMIT in a migration file.

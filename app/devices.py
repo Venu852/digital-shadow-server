@@ -12,7 +12,7 @@ from werkzeug.security import check_password_hash
 from .db import get_db
 from .auth import login_required, is_locked_out, record_failed_login, clear_lockout
 from .rules import SIGNAL_KEYS
-from .sharing import get_sharing
+from .sharing import LEVELS, get_sharing, set_sharing
 
 bp = Blueprint('devices', __name__, url_prefix='/api')
 
@@ -20,6 +20,7 @@ bp = Blueprint('devices', __name__, url_prefix='/api')
 TOKEN_ENDPOINTS = {
     'devices.pair',
     'devices.device_me',
+    'devices.device_sharing',
     'devices.upload_day',
     'devices.delete_device_data',
 }
@@ -240,6 +241,16 @@ def device_me():
         "username": account['username'],
         "sharing_level": get_sharing(g.device['account_id'])['level'],
     }), 200
+
+@bp.route('/device/sharing', methods=['PUT'])
+@token_required
+def device_sharing():
+    # Same rules as PUT /api/me/sharing, for the device's account
+    data = request.get_json(silent=True)
+    level = data.get('level') if isinstance(data, dict) else None
+    if level not in LEVELS:
+        return jsonify({"error": "Invalid sharing level"}), 400
+    return jsonify(set_sharing(g.device['account_id'], level)), 200
 
 @bp.route('/device/days/<day>', methods=['PUT'])
 @token_required
