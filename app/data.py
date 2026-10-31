@@ -2,7 +2,7 @@
 import datetime
 import json
 from .db import get_db
-from .rules import CONTEXT_TAGS, MIN_GROUP, SIGNAL_KEYS, SIGNALS_BY_KEY, round_half_up, top_signal
+from .rules import CONTEXT_TAGS, MIN_GROUP, SIGNAL_KEYS, SIGNALS_BY_KEY, backfill_signals, round_half_up
 from .sharing import get_sharing
 
 CONTRIBUTING_LEVELS = ('team_totals', 'my_trend')
@@ -142,12 +142,13 @@ def team_daily_levels(contributors, start, end):
 def adopted_decisions(team_id, since):
     """'approved' decisions decided on or after `since` (a date), newest first.
 
-    Each row is {"day", "adopted_on"}; adopted_on is the UTC date of decided_at.
+    Each row is {"day", "adopted_on", "signal"}; adopted_on is the UTC date of decided_at and
+    signal is the stored SIGNALS entry. Decisions without a valid stored signal are left out.
     """
     rows = get_db().execute(
         """
-        SELECT day, decided_at FROM action_decisions
-        WHERE team_id = ? AND decision = 'approved'
+        SELECT day, decided_at, signal FROM action_decisions
+        WHERE team_id = ? AND decision = 'approved' AND signal IS NOT NULL
         ORDER BY decided_at DESC, day DESC
         """,
         (team_id,)
@@ -155,8 +156,8 @@ def adopted_decisions(team_id, since):
     result = []
     for r in rows:
         adopted_on = datetime.datetime.fromisoformat(r['decided_at']).astimezone(datetime.UTC).date()
-        if adopted_on >= since:
-            result.append({"day": r['day'], "adopted_on": adopted_on})
+        if adopted_on >= since and r['signal'] in SIGNALS_BY_KEY:
+            result.append({"day": r['day'], "adopted_on": adopted_on, "signal": SIGNALS_BY_KEY[r['signal']]})
     return result
 
 def suggestion_day(day):
@@ -169,10 +170,8 @@ def today_utc():
     return datetime.datetime.now(datetime.UTC).date()
 
 def adopted_with_signals(team_id, contributors, since, extra_days=0):
-    """Adopted suggestions since `since`, each with the signal its suggestion day pointed to.
+    """Adopted suggestions since `since`, each with the signal stored when it was decided.
 
-    The signal is read from the suggestion day's group levels, computed now from current
-    contributors (as the suggestion list does); a day without 3+ contributors is skipped.
     Also returns the daily levels loaded from `extra_days` before the earliest date needed.
     """
     adopted = adopted_decisions(team_id, since)
@@ -181,12 +180,25 @@ def adopted_with_signals(team_id, contributors, since, extra_days=0):
     days = [d for d in (suggestion_day(a['day']) for a in adopted) if d] + [a['adopted_on'] for a in adopted]
     start = min(days) - datetime.timedelta(days=extra_days)
     end = max(today_utc() + datetime.timedelta(days=1), max(days) + datetime.timedelta(days=extra_days))
-    levels = team_daily_levels(contributors, start, end)
+    return adopted, team_daily_levels(contributors, start, end)
 
-    result = []
-    for a in adopted:
-        entry = levels.get(suggestion_day(a['day']))
-        if entry is None:
-            continue
-        result.append({**a, "signal": SIGNALS_BY_KEY[top_signal(entry['levels_avg'])]})
-    return result, levels
+def backfill_decision_signals():
+    """Fill NULL signals of existing decisions from current group levels; safe to run again.
+
+    A decision whose day no longer has 3+ contributors keeps a NULL signal. Returns the number
+    of decisions filled.
+    """
+    db = get_db()
+    rows = db.execute("SELECT team_id, day FROM action_decisions WHERE signal IS NULL").fetchall()
+    pending = [(r['team_id'], r['day']) for r in rows if suggestion_day(r['day'])]
+    group_levels = {}
+    for team_id in {t for t, _ in pending}:
+        days = [suggestion_day(d) for t, d in pending if t == team_id]
+        levels = team_daily_levels(team_contributors(team_id), min(days), max(days))
+        group_levels[team_id] = {e['day']: e['levels_avg'] for e in levels.values()}
+    filled = backfill_signals(pending, group_levels)
+    for (team_id, day), signal in filled.items():
+        db.execute("UPDATE action_decisions SET signal = ? WHERE team_id = ? AND day = ? AND signal IS NULL",
+                   (signal, team_id, day))
+    db.commit()
+    return len(filled)

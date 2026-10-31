@@ -198,21 +198,23 @@ def decide_action(team_id, day):
         return jsonify({"error": "decision must be 'approved' or 'dismissed'"}), 400
 
     settings, _, hidden, series = team_view(team_id, OVERVIEW_DAYS)
-    action_days = set() if hidden else {a['day'] for a in current_actions(team_id, settings, series)}
-    if not settings['human_review'] or day not in action_days:
+    # The signal shown for the day is stored with the decision, so later level changes never alter it
+    signals = {} if hidden else {a['day']: a['signal'] for a in current_actions(team_id, settings, series)}
+    if not settings['human_review'] or day not in signals:
         return jsonify({"error": "Action not found"}), 404
 
     db = get_db()
     db.execute(
         """
-        INSERT INTO action_decisions (team_id, day, decision, decided_by, decided_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO action_decisions (team_id, day, decision, decided_by, decided_at, signal)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(team_id, day) DO UPDATE SET
             decision = excluded.decision,
             decided_by = excluded.decided_by,
-            decided_at = excluded.decided_at
+            decided_at = excluded.decided_at,
+            signal = excluded.signal
         """,
-        (team_id, day, decision, g.user['id'], datetime.datetime.now(datetime.UTC).isoformat())
+        (team_id, day, decision, g.user['id'], datetime.datetime.now(datetime.UTC).isoformat(), signals[day])
     )
     record(g.user['id'], 'decide_action', team_id=team_id, detail={"day": day, "decision": decision})
     db.commit()

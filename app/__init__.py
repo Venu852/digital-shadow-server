@@ -47,6 +47,11 @@ def create_app(test_config=None):
     db.init_db(app)
     app.teardown_appcontext(db.close_db)
 
+    # Decisions saved before their signal was stored get one from current data (only NULLs)
+    from . import data
+    with app.app_context():
+        data.backfill_decision_signals()
+
     # Old summaries and audit rows are purged on startup, then at most every 6 hours
     with app.app_context():
         retention.run_purge(app, db.get_db())

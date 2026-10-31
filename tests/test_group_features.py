@@ -3,9 +3,9 @@ retention and export."""
 import datetime
 import json
 import pytest
-from app import retention
+from app import data, retention
 from app.db import get_db
-from app.rules import GROUP_AGREEMENT
+from app.rules import GROUP_AGREEMENT, backfill_signals
 from test_privacy_matrix import XHR, World, now_iso, world  # noqa: F401
 
 def today():
@@ -33,11 +33,12 @@ class Readings:
                 (self.devices[name], day.isoformat(), drift, json.dumps(levels), 60, 'established', now_iso())
             )
 
-def decide(world, team_id, day, decision, decided_on):
+def decide(world, team_id, day, decision, decided_on, signal='night'):
     decided_at = datetime.datetime.combine(decided_on, datetime.time(12, 0), datetime.UTC).isoformat()
     world.db(
-        "INSERT INTO action_decisions (team_id, day, decision, decided_by, decided_at) VALUES (?, ?, ?, ?, ?)",
-        (team_id, day.isoformat(), decision, world.ids['boss'], decided_at)
+        "INSERT INTO action_decisions (team_id, day, decision, decided_by, decided_at, signal)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (team_id, day.isoformat(), decision, world.ids['boss'], decided_at, signal)
     )
 
 PEOPLE = ('p1', 'p2', 'p3')
@@ -143,7 +144,7 @@ def test_impact_null_windows(world, group):
     team_id, r = group
     adopted = date_at(-20)
     r.put(PEOPLE, adopted, 50, lv(switching=70))
-    decide(world, team_id, adopted, 'approved', adopted)
+    decide(world, team_id, adopted, 'approved', adopted, signal='switching')
     world.login('boss')
     item = impact(world, team_id).get_json()['items'][0]
     assert item['signal'] == 'switching'
@@ -209,6 +210,87 @@ def test_group_updates_text_only_and_for_nothing_level(world, group):
 def test_group_updates_individuals_only(world, group):
     world.login('boss')
     assert world.get('/api/me/group-updates').status_code == 403
+
+# ---------------- stored decision signal ----------------
+
+def put_decision(world, team_id, day, decision):
+    return world.client.put(f'/api/teams/{team_id}/actions/{day.isoformat()}',
+                            json={'decision': decision}, headers=XHR)
+
+def stored_signals(world, team_id):
+    rows = world.query("SELECT day, decision, signal FROM action_decisions WHERE team_id = ? ORDER BY day",
+                       (team_id,))
+    return [(r['day'], r['decision'], r['signal']) for r in rows]
+
+def test_stored_signal_survives_later_level_changes(world, group):
+    team_id, r = group
+    day = date_at(-2)
+    r.put(PEOPLE, day, 50, lv(night=80, switching=20))
+    world.login('boss')
+    assert put_decision(world, team_id, day, 'approved').status_code == 200
+    assert stored_signals(world, team_id) == [(day.isoformat(), 'approved', 'night')]
+
+    # The group's levels for that day change afterwards; switching is now the top signal
+    r.put(PEOPLE, day, 50, lv(night=10, switching=90))
+    item = impact(world, team_id).get_json()['items'][0]
+    assert (item['signal'], item['signal_label']) == ('night', 'Late-night use')
+    assert stored_signals(world, team_id) == [(day.isoformat(), 'approved', 'night')]
+    world.login('p1')
+    adopted = world.get('/api/me/group-updates').get_json()['groups'][0]['adopted']
+    assert [a['signal_label'] for a in adopted] == ['Late-night use']
+
+def test_dismissed_decision_stores_signal(world, group):
+    team_id, r = group
+    day = date_at(-1)
+    r.put(PEOPLE, day, 50, lv(switching=70))
+    world.login('boss')
+    assert put_decision(world, team_id, day, 'dismissed').status_code == 200
+    assert stored_signals(world, team_id) == [(day.isoformat(), 'dismissed', 'switching')]
+
+def test_null_signal_left_out_of_impact_and_group_updates(world, group):
+    team_id, r = group
+    r.put(PEOPLE, date_at(-3), 50, lv(night=80))
+    decide(world, team_id, date_at(-3), 'approved', date_at(-3), signal=None)
+    world.login('boss')
+    assert impact(world, team_id).get_json() == {"hidden": False, "items": []}
+    world.login('p1')
+    assert world.get('/api/me/group-updates').get_json()['groups'][0]['adopted'] == []
+
+def test_backfill_signals_pure():
+    decisions = [(1, '2026-01-01'), (1, '2026-01-02'), (2, '2026-01-01')]
+    group_levels = {1: {'2026-01-01': lv(night=10, switching=50)}}
+    assert backfill_signals(decisions, group_levels) == {(1, '2026-01-01'): 'switching'}
+    assert backfill_signals([], group_levels) == {}
+
+def test_backfill_fills_what_it_can_and_is_idempotent(world, group):
+    team_id, r = group
+    r.put(PEOPLE, date_at(-3), 50, lv(switching=70))
+    r.put(['p1', 'p2'], date_at(-4), 50, lv(night=70))      # only 2 contributors: stays NULL
+    r.put(PEOPLE, date_at(-5), 50, lv(switching=70))
+    decide(world, team_id, date_at(-3), 'approved', date_at(-3), signal=None)
+    decide(world, team_id, date_at(-4), 'approved', date_at(-4), signal=None)
+    decide(world, team_id, date_at(-5), 'dismissed', date_at(-5), signal='night')   # already stored
+
+    with world.app.app_context():
+        assert data.backfill_decision_signals() == 1
+    expected = [(date_at(-5).isoformat(), 'dismissed', 'night'),
+                (date_at(-4).isoformat(), 'approved', None),
+                (date_at(-3).isoformat(), 'approved', 'switching')]
+    assert stored_signals(world, team_id) == expected
+
+    # Running again changes nothing, even after the levels change
+    r.put(PEOPLE, date_at(-3), 50, lv(night=90))
+    with world.app.app_context():
+        assert data.backfill_decision_signals() == 0
+    assert stored_signals(world, team_id) == expected
+
+def test_startup_runs_backfill(app, world, group):
+    from app import create_app
+    team_id, r = group
+    r.put(PEOPLE, date_at(-3), 50, lv(night=70))
+    decide(world, team_id, date_at(-3), 'approved', date_at(-3), signal=None)
+    create_app({'TESTING': True, 'DATABASE': app.config['DATABASE'], 'SECRET_KEY': 'x'})
+    assert stored_signals(world, team_id) == [(date_at(-3).isoformat(), 'approved', 'night')]
 
 # ---------------- weekday pattern ----------------
 

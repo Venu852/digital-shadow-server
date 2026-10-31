@@ -125,6 +125,20 @@ def factor_breakdown(levels, voice):
 def top_signal(levels):
     return max(SIGNAL_KEYS, key=lambda key: (levels[key], -SIGNAL_KEYS.index(key)))
 
+def backfill_signals(decisions, group_levels):
+    """Signals for decisions saved without one.
+
+    `decisions` is [(team_id, day)]; `group_levels` is {team_id: {day: levels_avg}} holding only
+    days that still have MIN_GROUP or more contributors. Returns {(team_id, day): signal key};
+    a decision whose day is missing is left out, so its signal stays NULL.
+    """
+    result = {}
+    for team_id, day in decisions:
+        levels = group_levels.get(team_id, {}).get(day)
+        if levels is not None:
+            result[(team_id, day)] = top_signal(levels)
+    return result
+
 def personal_suggestions(levels, limit=2):
     """Nudges for the signals with the highest levels; ties follow SIGNALS order."""
     ranked = sorted(SIGNALS, key=lambda s: levels[s["key"]], reverse=True)[:limit]
