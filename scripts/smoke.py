@@ -72,7 +72,7 @@ def run_smoke_test():
 
     # 4. Join Team
     if invite_code:
-        status, res = request("POST", "/api/teams/join", {"invite_code": invite_code})
+        status, res = request("POST", "/api/teams/join", {"invite_code": invite_code, "accept": True})
         check("Join Team", status == 200 and "team_id" in res)
 
     # 5. List Teams as Individual

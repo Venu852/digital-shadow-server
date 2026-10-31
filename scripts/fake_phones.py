@@ -157,7 +157,7 @@ def main():
             client = Client(args.base_url)
             register_or_login(client, username, 'individual')
 
-            status, res = client.request('POST', '/api/teams/join', {'invite_code': invite_codes[team_name]})
+            status, res = client.request('POST', '/api/teams/join', {'invite_code': invite_codes[team_name], 'accept': True})
             expect(status, res, 200, 409)
             status, res = client.request('PUT', '/api/me/sharing', {'level': level})
             expect(status, res, 200)

@@ -38,7 +38,7 @@ def test_individual_joins_and_case_insensitive(auth, client):
     # Join using lower-case code
     res = client.post(
         '/api/teams/join',
-        json={'invite_code': code.lower()},
+        json={'invite_code': code.lower(), 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
     assert res.status_code == 200
@@ -56,7 +56,7 @@ def test_manager_cannot_join(auth, client):
     auth.register(username='mgr4', password='password123', role='manager')
     res = client.post(
         '/api/teams/join',
-        json={'invite_code': code},
+        json={'invite_code': code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
     assert res.status_code == 403
@@ -73,13 +73,13 @@ def test_duplicate_join(auth, client):
     auth.register(username='ind3', password='password123', role='individual')
     client.post(
         '/api/teams/join',
-        json={'invite_code': code},
+        json={'invite_code': code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
 
     res = client.post(
         '/api/teams/join',
-        json={'invite_code': code},
+        json={'invite_code': code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
     assert res.status_code == 409
@@ -97,7 +97,7 @@ def test_leave_works(auth, client):
     auth.register(username='ind4', password='password123', role='individual')
     client.post(
         '/api/teams/join',
-        json={'invite_code': code},
+        json={'invite_code': code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
 
@@ -133,7 +133,7 @@ def test_rotated_code_invalidates_old_one(auth, client):
     # Old code fails
     res = client.post(
         '/api/teams/join',
-        json={'invite_code': old_code},
+        json={'invite_code': old_code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
     assert res.status_code == 404
@@ -141,7 +141,7 @@ def test_rotated_code_invalidates_old_one(auth, client):
     # New code works
     res = client.post(
         '/api/teams/join',
-        json={'invite_code': new_code},
+        json={'invite_code': new_code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
     assert res.status_code == 200
@@ -158,7 +158,7 @@ def test_individual_team_list_never_contains_invite_code(auth, client):
     auth.register(username='ind6', password='password123', role='individual')
     client.post(
         '/api/teams/join',
-        json={'invite_code': code},
+        json={'invite_code': code, 'accept': True},
         headers={'X-Requested-With': 'XMLHttpRequest'}
     )
 

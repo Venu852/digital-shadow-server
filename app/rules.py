@@ -1,4 +1,5 @@
 """Pure scoring rules shared by the read APIs. No database or Flask access here."""
+import datetime
 import math
 
 MIN_GROUP = 3
@@ -64,6 +65,17 @@ SIGNALS = (
 SIGNAL_KEYS = tuple(s["key"] for s in SIGNALS)
 SIGNALS_BY_KEY = {s["key"]: s for s in SIGNALS}
 
+# Shown to a person before they join a group; joining requires accepting it
+GROUP_AGREEMENT = (
+    "The coordinator sees a group average only when at least 3 people share.",
+    "If you choose My drift trend, the coordinator can see your drift trend and which signals drive it. "
+    "Every view is logged and you can see it.",
+    "The coordinator never sees app names, categories, hours of use or raw motion.",
+    "You can change your sharing level, leave the group or delete your data at any time.",
+)
+IMPACT_NOTE = "An observation, not proof."
+WEEKDAY_LABELS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+
 EXPLAIN_NOTE = (
     "This reading says your phone-use rhythm is shifting. It never states a diagnosis, "
     "a mental-health condition, or a judgement about you."
@@ -122,3 +134,47 @@ def personal_suggestions(levels, limit=2):
         "text": s["personal"],
         "because": s["self"],
     } for s in ranked]
+
+def window_mean(values):
+    """Rounded mean, or None for an empty window."""
+    return round_half_up(sum(values) / len(values)) if values else None
+
+def impact_windows(adopted_on, days_by_date, signal):
+    """Before/after comparison around an adoption date.
+
+    `days_by_date` maps a date to {"avg_raw", "levels_avg"} for days that already have
+    MIN_GROUP or more contributors. Before is the 7 days before the date, after the 7 days after.
+    """
+    def window(offsets):
+        days = [days_by_date[d] for d in (adopted_on + datetime.timedelta(days=o) for o in offsets)
+                if d in days_by_date]
+        return {
+            "drift": window_mean([d['avg_raw'] for d in days]),
+            "signal_level": window_mean([d['levels_avg'][signal] for d in days]),
+            "days": len(days),
+        }
+    before = window(range(-7, 0))
+    after = window(range(1, 8))
+    change = None
+    if before['days'] and after['days']:
+        change = {
+            "drift": after['drift'] - before['drift'],
+            "signal_level": after['signal_level'] - before['signal_level'],
+        }
+    return {"before": before, "after": after, "change": change, "complete": after['days'] >= 5}
+
+def weekday_pattern(daily, min_days=3, min_weekdays=4):
+    """`daily` is a list of (date, avg_raw). A weekday needs `min_days` days for an average;
+    `highest` needs `min_weekdays` weekdays with an average (ties go to the earlier weekday)."""
+    buckets = {i: [] for i in range(7)}
+    for day, value in daily:
+        buckets[day.weekday()].append(value)
+    rows = [{
+        "weekday": i,
+        "label": WEEKDAY_LABELS[i],
+        "avg": window_mean(buckets[i]) if len(buckets[i]) >= min_days else None,
+        "days": len(buckets[i]),
+    } for i in range(7)]
+    valued = [r for r in rows if r['avg'] is not None]
+    highest = max(valued, key=lambda r: (r['avg'], -r['weekday']))['label'] if len(valued) >= min_weekdays else None
+    return rows, highest

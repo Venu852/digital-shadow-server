@@ -5,15 +5,17 @@ from . import data
 from .audit import record
 from .auth import login_required
 from .db import get_db
-from .me_views import MAX_DAYS, build_explain, build_trend, parse_days
-from .rules import (CONTEXT_TAGS, MIN_GROUP, SIGNALS_BY_KEY, SUGGESTION_THRESHOLD,
-                    display_drift, horizon_for, status_for, top_signal)
+from .me_views import MAX_DAYS, build_explain, build_trend, parse_days, parse_int_arg
+from .rules import (CONTEXT_TAGS, IMPACT_NOTE, MIN_GROUP, SIGNALS_BY_KEY, SUGGESTION_THRESHOLD,
+                    display_drift, horizon_for, impact_windows, status_for, top_signal,
+                    weekday_pattern)
 
 bp = Blueprint('manager', __name__, url_prefix='/api')
 
 MAX_ACTIONS = 4
 OVERVIEW_DAYS = 14
 DECISIONS = ('approved', 'dismissed')
+IMPACT_DAYS = 60
 
 def manager_only(f):
     @functools.wraps(f)
@@ -257,3 +259,45 @@ def update_settings(team_id):
     record(g.user['id'], 'update_settings', team_id=team_id, detail=body)
     db.commit()
     return jsonify(settings_response(settings)), 200
+
+@bp.route('/teams/<int:team_id>/impact', methods=['GET'])
+@own_team
+def impact(team_id):
+    contributors = data.team_contributors(team_id)
+    if len(contributors) < MIN_GROUP:
+        return jsonify({"hidden": True, "items": []}), 200
+
+    since = data.today_utc() - datetime.timedelta(days=IMPACT_DAYS)
+    adopted, levels = data.adopted_with_signals(team_id, contributors, since, extra_days=7)
+    items = []
+    for a in adopted:
+        signal = a['signal']
+        items.append({
+            "day": a['day'],
+            "signal": signal['key'],
+            "signal_label": signal['label'],
+            "action": signal['action'],
+            "adopted_at": a['adopted_on'].isoformat(),
+            **impact_windows(a['adopted_on'], levels, signal['key']),
+            "note": IMPACT_NOTE,
+        })
+    # Never include usernames or account ids here
+    return jsonify({"hidden": False, "items": items}), 200
+
+@bp.route('/teams/<int:team_id>/weekday-pattern', methods=['GET'])
+@own_team
+def weekday(team_id):
+    weeks = parse_int_arg('weeks', 8, 2, 26)
+    if weeks is None:
+        return jsonify({"error": "weeks must be 2-26"}), 400
+
+    contributors = data.team_contributors(team_id)
+    hidden = len(contributors) < MIN_GROUP
+    daily = []
+    if not hidden:
+        # The window ends at tomorrow (UTC), like the other team views
+        end = data.today_utc() + datetime.timedelta(days=1)
+        levels = data.team_daily_levels(contributors, end - datetime.timedelta(days=weeks * 7 - 1), end)
+        daily = [(day, entry['avg_raw']) for day, entry in levels.items()]
+    rows, highest = weekday_pattern(daily)
+    return jsonify({"hidden": hidden, "weeks": weeks, "by_weekday": rows, "highest": highest}), 200

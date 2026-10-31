@@ -4,6 +4,8 @@ from flask import Flask, jsonify, request, g
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True, static_folder=None)
+    from . import retention
+    retention_days, audit_retention_days = retention.retention_settings()
 
     # Default configuration
     db_default = os.path.join(app.instance_path, 'shadow.db')
@@ -12,6 +14,8 @@ def create_app(test_config=None):
         SECRET_KEY=os.environ.get('SHADOW_SECRET_KEY'),
         COOKIE_SECURE=os.environ.get('COOKIE_SECURE') == '1',
         DASHBOARD_DIR=os.environ.get('SHADOW_DASHBOARD_DIR'),
+        RETENTION_DAYS=retention_days,
+        AUDIT_RETENTION_DAYS=audit_retention_days,
     )
 
     if test_config:
@@ -43,11 +47,22 @@ def create_app(test_config=None):
     db.init_db(app)
     app.teardown_appcontext(db.close_db)
 
+    # Old summaries and audit rows are purged on startup, then at most every 6 hours
+    with app.app_context():
+        retention.run_purge(app, db.get_db())
+
+    @app.before_request
+    def purge_old_data():
+        if retention.purge_due(app):
+            retention.run_purge(app, db.get_db())
+
     # Lockout state: (ip, username) -> [timestamp, count]
     # In-memory dict is fine as per requirements
     app.lockout_data = {}
     # Device rate limit state: device_id -> [timestamps]
     app.device_rate_data = {}
+    # Invite preview rate limit state: account_id -> [timestamps]
+    app.preview_rate_data = {}
 
     @app.before_request
     def check_security():

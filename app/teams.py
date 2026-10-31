@@ -1,12 +1,26 @@
 import datetime
 import secrets
-from flask import Blueprint, request, jsonify, g
+import time
+from flask import Blueprint, request, jsonify, g, current_app
 from .db import get_db
 from .auth import login_required
+from .rules import GROUP_AGREEMENT
 
 bp = Blueprint('teams', __name__, url_prefix='/api/teams')
 
 INVITE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+PREVIEW_LIMIT = 20
+PREVIEW_WINDOW = 3600
+
+def preview_rate_limited(account_id):
+    # In-memory, per account: guessing invite codes through previews stays slow
+    now = time.monotonic()
+    hits = current_app.preview_rate_data.setdefault(account_id, [])
+    hits[:] = [t for t in hits if now - t < PREVIEW_WINDOW]
+    if len(hits) >= PREVIEW_LIMIT:
+        return True
+    hits.append(now)
+    return False
 
 def generate_invite_code():
     return "".join(secrets.choice(INVITE_CHARS) for _ in range(8))
@@ -69,6 +83,33 @@ def list_teams():
         ).fetchall()
         return jsonify([dict(t) for t in teams]), 200
 
+@bp.route('/preview', methods=['GET'])
+@login_required
+def preview_team():
+    if g.user['role'] != 'individual':
+        return jsonify({"error": "Only individuals can join teams"}), 403
+    if preview_rate_limited(g.user['id']):
+        return jsonify({"error": "Too many requests"}), 429
+
+    invite_code = request.args.get('code', '').strip().upper()
+    team = get_db().execute(
+        """
+        SELECT t.name, a.username AS coordinator
+        FROM teams t
+        JOIN accounts a ON a.id = t.manager_id
+        WHERE UPPER(t.invite_code) = ?
+        """,
+        (invite_code,)
+    ).fetchone()
+    if not invite_code or team is None:
+        return jsonify({"error": "Invite code not found."}), 404
+
+    return jsonify({
+        "team": {"name": team['name']},
+        "coordinator": {"username": team['coordinator']},
+        "agreement": list(GROUP_AGREEMENT),
+    }), 200
+
 @bp.route('/join', methods=['POST'])
 @login_required
 def join_team():
@@ -76,6 +117,8 @@ def join_team():
         return jsonify({"error": "Only individuals can join teams"}), 403
 
     data = request.get_json()
+    if not isinstance(data, dict) or data.get('accept') is not True:
+        return jsonify({"error": "Please confirm the group agreement."}), 400
     invite_code = data.get('invite_code', '').upper()
 
     db = get_db()

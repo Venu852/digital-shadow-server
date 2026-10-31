@@ -19,6 +19,8 @@ python run.py
 # Run server and also serve the built dashboard (F:\digital-shadow-dashboard, `npm run build`)
 $env:SHADOW_DASHBOARD_DIR="F:\digital-shadow-dashboard\dist"; python run.py
 ```
+SHADOW_RETENTION_DAYS (default 90, minimum 14) and SHADOW_AUDIT_RETENTION_DAYS (default 365) set how long daily_summaries and audit_log rows are kept; app/retention.py purges on startup and at most every 6 hours (before_request).
+
 SHADOW_DASHBOARD_DIR is optional. When it names an existing folder, app/dashboard.py serves its files at / and returns index.html for any other non-/api path (single-page app fallback); unknown /api paths and paths that escape the folder (..) stay 404.
 
 ## Testing
@@ -36,6 +38,9 @@ python scripts/fake_phones.py [--base-url http://127.0.0.1:5050] [--ishaan-level
 
 # Check the read APIs' privacy rules against the fake_phones data (requires server running)
 python scripts/inspect_views.py
+
+# Dev only: set a group's newest adopted suggestion to N days ago so the impact check has data
+python scripts/demo_backdate.py --team "Team Nova" --days 8 --i-know-this-edits-data
 ```
 
 Phase 3 tests share the `World` helper and `world` fixture defined in tests/test_privacy_matrix.py.
@@ -60,6 +65,14 @@ Phase 3 tests share the `World` helper and `world` fixture defined in tests/test
 - Phones authenticate with a device token (`Authorization: Bearer`), never the password after pairing. Only the token's SHA-256 hex is stored; the token is returned once.
 - Sharing levels: nothing | team_totals | my_trend. Each change adds a sharing_consents row; the newest row is current.
 - A person sets their level from the dashboard (PUT /api/me/sharing, cookie) or from a paired phone (PUT /api/device/sharing, Bearer token). Both use app/sharing.py set_sharing: a row is added only for the first choice or a real change; both return 200 {level, changed_at}, invalid level -> 400.
+
+- Joining a group: GET /api/teams/preview?code= (individuals only, else 403; case-insensitive; unknown code -> 404 "Invite code not found."; 20 calls/hour per account, in-memory, then 429) returns {team:{name}, coordinator:{username}, agreement}. The four agreement lines are GROUP_AGREEMENT in app/rules.py. POST /api/teams/join needs "accept": true, else 400 "Please confirm the group agreement.".
+- Coordinator decisions live in action_decisions: 'approved' = Adopt, 'dismissed' = Not now. An adopted suggestion's signal is the top signal of its suggestion day's group levels, computed at request time from current contributors; a day that no longer has 3+ contributors is left out.
+- GET /api/teams/<id>/impact (that team's coordinator; other teams 404): hidden team -> {hidden: true, items: []}. Otherwise one item per 'approved' decision decided in the last 60 days, newest first, comparing the 7 calendar days before and the 7 after the UTC date of decided_at (that date itself is in neither). Only days with 3+ contributors count; drift = mean raw team average, signal_level = mean average level of the adopted signal; null when a window has no days; change null unless both windows have days; complete = after.days >= 5; note "An observation, not proof.".
+- GET /api/me/group-updates (individuals): every group the person belongs to, at any sharing level, with its 'approved' decisions from the last 30 days as {day, signal_label, text} (the group suggestion text). No numbers.
+- GET /api/teams/<id>/weekday-pattern?weeks=8 (coordinator of that team; weeks 2-26 else 400): raw daily team average per weekday (Mon=0) over the window ending tomorrow UTC. A weekday gets avg only with 3+ days; highest only when 4+ weekdays have an avg. Hidden team -> every avg null, days 0, highest null.
+- GET /api/me/export (individuals): JSON attachment digital-shadow-export.json with the account {username, role, created_at}, sharing history, devices {id, name, created_at, last_seen_at, revoked}, all daily_summaries from the caller's devices, the access log and group memberships. Never password_hash, token_hash or anyone else's data.
+- Retention: daily_summaries older than SHADOW_RETENTION_DAYS and audit_log rows older than SHADOW_AUDIT_RETENTION_DAYS are deleted (app/retention.py purge(db, today, ...), a pure function of "today").
 
 ## Standing Rules
 - Migrations are append-only (numbered SQL files in app/migrations/). Each file runs atomically with its schema_version row (app/db.py); never put BEGIN/COMMIT in a migration file.
