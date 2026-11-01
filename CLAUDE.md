@@ -3,6 +3,7 @@
 ## Stack
 - Python 3.11+
 - Flask 3
+- waitress (production server, run_prod.py)
 - SQLite3 (standard library)
 - pytest
 
@@ -13,13 +14,30 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Run server
+# Run server (development)
 python run.py
+
+# Production (waitress, 127.0.0.1:SHADOW_PORT, 8 threads); loads the untracked .env.ps1
+# (copy .env.ps1.example). Going live behind a tunnel: docs/GO_LIVE.md
+powershell -ExecutionPolicy Bypass -File start_prod.ps1
+
+# Back up the database (sqlite3 online backup) into SHADOW_BACKUP_DIR (default F:\digital-shadow-backups), keeps 14
+.venv\Scripts\python scripts\backup.py
+# Register the daily backup task once
+powershell -ExecutionPolicy Bypass -File scripts\backup_task.ps1
 
 # Run server and also serve the built dashboard (F:\digital-shadow-dashboard, `npm run build`)
 $env:SHADOW_DASHBOARD_DIR="F:\digital-shadow-dashboard\dist"; python run.py
 ```
 SHADOW_RETENTION_DAYS (default 90, minimum 14) and SHADOW_AUDIT_RETENTION_DAYS (default 365) set how long daily_summaries and audit_log rows are kept; app/retention.py purges on startup and at most every 6 hours (before_request).
+
+Production settings (all optional; see .env.ps1.example):
+- COOKIE_SECURE=1: Secure session cookie and Strict-Transport-Security (max-age 15552000). Set only behind HTTPS.
+- SHADOW_CLIENT_IP_HEADER (default empty = ignore proxy headers): when set AND the connection comes from loopback, app/clientip.py client_ip() takes the client IP from that header (X-Forwarded-For: the right-most entry that parses as an IP; any other header, e.g. CF-Connecting-IP: its value if it is an IP); otherwise the connection address. Used by the login/pairing lockout, the registration limit and the request log. run_prod.py passes clear_untrusted_proxy_headers=False so waitress does not strip X-Forwarded-For first.
+- SHADOW_ENROLL_CODE: when set, POST /api/register needs a matching "enroll_code" (hmac.compare_digest), else 403 "Enrollment code required.". Unset = open registration (development).
+- SHADOW_PORT (default 5050), SHADOW_BACKUP_DIR (scripts/backup.py).
+
+Request log: instance/server.log (app/requestlog.py, rotating 5 MB x 5; config LOG_FILE), one line per request: UTC time, method, path without query string, status, duration, client IP. Never bodies, headers, passwords or tokens.
 
 SHADOW_DASHBOARD_DIR is optional. When it names an existing folder, app/dashboard.py serves its files at / and returns index.html for any other non-/api path (single-page app fallback); unknown /api paths and paths that escape the folder (..) stay 404.
 
@@ -82,4 +100,7 @@ Phase 3 tests share the `World` helper and `world` fixture defined in tests/test
 - All errors are returned as JSON: `{"error": "<message>"}`.
 - All POST/PUT/DELETE /api/ routes require `X-Requested-With: XMLHttpRequest`, except the device token routes listed in `app/devices.py` TOKEN_ENDPOINTS (pair, /api/device/*), which never read cookies.
 - Device token routes are rate limited to 300 requests/hour per device (in-memory).
-- All /api/ responses must have specific security headers.
+- POST /api/register is limited to 10 per hour per client IP (in-memory, 429); created accounts and wrong enrollment codes count, other rejections (bad fields, taken username) do not.
+- Every response has X-Content-Type-Options nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer, Permissions-Policy "geolocation=(), camera=(), microphone=()", Cache-Control no-store and the CSP in app/__init__.py (script-src 'self', no inline scripts: the built dashboard must keep loading under it); HSTS only when COOKIE_SECURE=1.
+- Public routes (no login): GET /api/health -> {"ok": true, "version": "1", "db": <SELECT 1 worked>}; GET /api/config -> {"enroll_required": bool}.
+- Never log passwords, tokens or request bodies.

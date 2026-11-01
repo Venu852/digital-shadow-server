@@ -1,13 +1,19 @@
 import datetime
+import hmac
 import re
+import time
 from flask import Blueprint, request, jsonify, session, current_app, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from .db import get_db
+from .clientip import client_ip
 
 bp = Blueprint('auth', __name__, url_prefix='/api')
 
+REGISTER_LIMIT = 10
+REGISTER_WINDOW = 3600
+
 def get_lockout_key(username):
-    return (request.remote_addr, username.lower())
+    return (client_ip(), username.lower())
 
 def is_locked_out(username):
     key = get_lockout_key(username)
@@ -35,9 +41,33 @@ def clear_lockout(username):
     key = get_lockout_key(username)
     current_app.lockout_data.pop(key, None)
 
+def register_hits():
+    # Recent counted registration attempts from this client IP, oldest first
+    now = time.monotonic()
+    hits = current_app.register_rate_data.setdefault(client_ip(), [])
+    hits[:] = [t for t in hits if now - t < REGISTER_WINDOW]
+    return hits
+
+def enroll_code_ok(data):
+    expected = current_app.config.get('ENROLL_CODE')
+    if not expected:
+        return True
+    given = data.get('enroll_code')
+    if not isinstance(given, str):
+        return False
+    return hmac.compare_digest(given.encode('utf-8'), expected.encode('utf-8'))
+
 @bp.route('/register', methods=['POST'])
 def register():
+    # Accounts created and wrong enrollment codes both count toward 10 per hour per IP
+    hits = register_hits()
+    if len(hits) >= REGISTER_LIMIT:
+        return jsonify({"error": "Too many registrations. Try again later."}), 429
+
     data = request.get_json()
+    if not enroll_code_ok(data):
+        hits.append(time.monotonic())
+        return jsonify({"error": "Enrollment code required."}), 403
     username = data.get('username', '').lower()
     password = data.get('password', '')
     role = data.get('role', '')
@@ -60,6 +90,7 @@ def register():
         user_id = cursor.lastrowid
     except db.IntegrityError:
         return jsonify({"error": "Username already exists"}), 409
+    hits.append(time.monotonic())
 
     session.clear()
     session['user_id'] = user_id

@@ -1,6 +1,11 @@
 import os
 import secrets
+import sqlite3
 from flask import Flask, jsonify, request, g
+
+VERSION = "1"
+CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+       "script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True, static_folder=None)
@@ -16,6 +21,11 @@ def create_app(test_config=None):
         DASHBOARD_DIR=os.environ.get('SHADOW_DASHBOARD_DIR'),
         RETENTION_DAYS=retention_days,
         AUDIT_RETENTION_DAYS=audit_retention_days,
+        # Empty = ignore proxy headers; see app/clientip.py
+        CLIENT_IP_HEADER=os.environ.get('SHADOW_CLIENT_IP_HEADER', '').strip(),
+        # Empty = registration stays open (development)
+        ENROLL_CODE=os.environ.get('SHADOW_ENROLL_CODE') or None,
+        LOG_FILE=os.path.join(app.instance_path, 'server.log'),
     )
 
     if test_config:
@@ -41,6 +51,10 @@ def create_app(test_config=None):
         SESSION_COOKIE_SAMESITE='Lax',
         SESSION_COOKIE_SECURE=app.config['COOKIE_SECURE'],
     )
+
+    # Request log (instance/server.log); registered first so it times every request
+    from . import requestlog
+    requestlog.register(app)
 
     # Database setup
     from . import db
@@ -68,11 +82,13 @@ def create_app(test_config=None):
     app.device_rate_data = {}
     # Invite preview rate limit state: account_id -> [timestamps]
     app.preview_rate_data = {}
+    # Registration rate limit state: client ip -> [timestamps]
+    app.register_rate_data = {}
 
     @app.before_request
     def check_security():
-        # Health check is public
-        if request.path == '/api/health':
+        # Health check and public config are public
+        if request.path in ('/api/health', '/api/config'):
             return
 
         # POST/PUT/DELETE require X-Requested-With and JSON body
@@ -88,11 +104,26 @@ def create_app(test_config=None):
     def add_security_headers(response):
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Referrer-Policy'] = 'no-referrer'
+        response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+        response.headers['Content-Security-Policy'] = CSP
+        # Only behind HTTPS (the tunnel); a plain-http dev server must not pin HTTPS
+        if app.config['COOKIE_SECURE']:
+            response.headers['Strict-Transport-Security'] = 'max-age=15552000'
         return response
 
     @app.route('/api/health')
     def health():
-        return jsonify({"ok": True})
+        try:
+            db_ok = db.get_db().execute("SELECT 1").fetchone()[0] == 1
+        except sqlite3.Error:
+            db_ok = False
+        return jsonify({"ok": True, "version": VERSION, "db": db_ok})
+
+    @app.route('/api/config')
+    def public_config():
+        return jsonify({"enroll_required": bool(app.config['ENROLL_CODE'])})
 
     # Register blueprints
     from . import auth, teams, sharing, devices, me_views, manager

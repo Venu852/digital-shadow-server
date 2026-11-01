@@ -333,9 +333,11 @@ def test_weekday_window_and_validation(world, group):
     for offset in offsets_for(0, 3):
         r.put(PEOPLE, date_at(offset), 10, lv())
     world.login('boss')
-    # Two weeks hold only two Mondays
+    # Two weeks hold only two Mondays; the window ends tomorrow, so on a Sunday one of them
+    # is tomorrow and holds no data yet
+    in_window = sum(1 for offset in offsets_for(0, 3) if offset >= -12)
     assert weekday_body(world, team_id, weeks=2)['by_weekday'][0] == {
-        "weekday": 0, "label": "Mon", "avg": None, "days": 2}
+        "weekday": 0, "label": "Mon", "avg": None, "days": in_window}
     for weeks in ('1', '27', 'abc', '-3'):
         res = world.get(f'/api/teams/{team_id}/weekday-pattern?weeks={weeks}')
         assert res.status_code == 400

@@ -46,7 +46,7 @@ def test_api_unchanged(dash):
     client = make_client(dash)
     res = client.get('/api/health')
     assert res.status_code == 200
-    assert res.get_json() == {"ok": True}
+    assert res.get_json() == {"ok": True, "version": "1", "db": True}
     assert client.get('/api/me').status_code == 401
 
 def test_unknown_api_path_not_index(dash):
