@@ -3,4 +3,5 @@ instance/
 __pycache__/
 *.pyc
 .pytest_cache/
+.vibe-wise/
 .env.ps1
