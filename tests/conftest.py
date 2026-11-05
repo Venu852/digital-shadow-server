@@ -1,7 +1,31 @@
 import os
 import tempfile
+import flask
 import pytest
 from app import create_app
+
+# Settings from the operator's shell (for example after loading .env.ps1) must not reach the
+# tests: they could point the default database at production or require an enrollment code.
+SHADOW_ENV = (
+    'SHADOW_DB', 'SHADOW_SECRET_KEY', 'COOKIE_SECURE', 'SHADOW_CLIENT_IP_HEADER',
+    'SHADOW_ENROLL_CODE', 'SHADOW_DASHBOARD_DIR', 'SHADOW_RETENTION_DAYS',
+    'SHADOW_AUDIT_RETENTION_DAYS', 'SHADOW_PORT', 'SHADOW_BACKUP_DIR',
+)
+
+@pytest.fixture(scope='session', autouse=True)
+def isolated_instance(tmp_path_factory):
+    """Every app built during the tests uses a temporary instance folder.
+
+    Flask derives the instance folder from auto_find_instance_path; replacing it covers every
+    create_app call, however a test imports it. The request log (LOG_FILE), the secret_key file
+    and the default database therefore never touch the repository's instance/ folder.
+    """
+    instance = str(tmp_path_factory.mktemp('instance'))
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(flask.Flask, 'auto_find_instance_path', lambda self: instance)
+        for name in SHADOW_ENV:
+            mp.delenv(name, raising=False)
+        yield instance
 
 @pytest.fixture
 def app():
