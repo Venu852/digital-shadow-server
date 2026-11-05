@@ -361,8 +361,33 @@ powershell -ExecutionPolicy Bypass -File F:\digital-shadow-server\scripts\backup
 Start-ScheduledTask -TaskName 'Digital Shadow backup'     # try it now
 ```
 
-**Restoring:** stop the server, copy the backup over `instance\shadow.db` (delete
-`shadow.db-wal` and `shadow.db-shm` next to it if they exist), start the server.
+**Restoring:** the live database is the file `SHADOW_DB` points to (set in `.env.ps1`;
+only when `SHADOW_DB` is not set is it `instance\shadow.db`).
+
+1. Stop the server (close its window, or
+   `Stop-ScheduledTask -TaskName 'Digital Shadow server'`).
+2. Load the settings and check the target:
+
+   ```powershell
+   cd F:\digital-shadow-server
+   . .\.env.ps1
+   $env:SHADOW_DB
+   ```
+
+3. Keep the current file, and move the WAL files next to it aside if they exist:
+
+   ```powershell
+   Copy-Item $env:SHADOW_DB "$env:SHADOW_DB.before-restore"
+   foreach ($x in '-wal', '-shm') { if (Test-Path "$env:SHADOW_DB$x") { Move-Item "$env:SHADOW_DB$x" "$env:SHADOW_DB$x.before-restore" } }
+   ```
+
+4. Copy the backup in:
+
+   ```powershell
+   Copy-Item "$env:SHADOW_BACKUP_DIR\shadow-YYYYmmdd-HHMM.db" $env:SHADOW_DB -Force
+   ```
+
+5. Start the server and check `http://127.0.0.1:5050/api/health`.
 
 Backups contain everyone's account and daily summaries: keep them on this laptop or on a
 disk only you control.
